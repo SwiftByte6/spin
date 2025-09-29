@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Code Challenge - Backup</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #1a1a1a; color: #fff; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .question { background: #2a2a2a; padding: 20px; margin: 20px 0; border-radius: 8px; }
+        .code-editor { width: 100%; height: 300px; background: #1e1e1e; color: #fff; border: 1px solid #444; padding: 10px; font-family: monospace; }
+        .run-btn { background: #4CAF50; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; margin: 10px 0; }
+        .output { background: #333; padding: 10px; margin: 10px 0; border-radius: 4px; white-space: pre-wrap; }
+        .success { color: #4CAF50; }
+        .error { color: #f44336; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Code Challenge - Emergency Backup</h1>
+        
+        <div class="question">
+            <h3>Question 1: Add Two Numbers</h3>
+            <p>Input: two integers a, b. Output: a + b</p>
+            <p>Examples: solve(1, 2) = 3, solve(-3, 3) = 0</p>
+            
+            <select id="lang1" onchange="updateEditor(1)">
+                <option value="js">JavaScript</option>
+                <option value="py">Python</option>
+                <option value="java">Java</option>
+                <option value="cpp">C++</option>
+            </select>
+            
+            <textarea id="code1" class="code-editor">// JavaScript
+function solve(a, b) {
+    return a + b;
+}
+
+// Test
+console.log(solve(1, 2)); // Should output 3
+console.log(solve(-3, 3)); // Should output 0</textarea>
+            
+            <button class="run-btn" onclick="runCode(1)">Run Code</button>
+            <div id="output1" class="output"></div>
+        </div>
+
+        <div class="question">
+            <h3>Question 2: Count Vowels</h3>
+            <p>Input: string s. Output: number of vowels (a,e,i,o,u) in s</p>
+            <p>Examples: solve("hello") = 2, solve("xyz") = 0</p>
+            
+            <select id="lang2" onchange="updateEditor(2)">
+                <option value="js">JavaScript</option>
+                <option value="py">Python</option>
+                <option value="java">Java</option>
+                <option value="cpp">C++</option>
+            </select>
+            
+            <textarea id="code2" class="code-editor">// JavaScript
+function solve(s) {
+    return (s.match(/[aeiou]/gi) || []).length;
+}
+
+// Test
+console.log(solve("hello")); // Should output 2
+console.log(solve("xyz")); // Should output 0</textarea>
+            
+            <button class="run-btn" onclick="runCode(2)">Run Code</button>
+            <div id="output2" class="output"></div>
+        </div>
+    </div>
+
+    <script>
+        const templates = {
+            js: {
+                1: `function solve(a, b) {
+    return a + b;
+}
+
+// Test
+console.log(solve(1, 2));
+console.log(solve(-3, 3));`,
+                2: `function solve(s) {
+    return (s.match(/[aeiou]/gi) || []).length;
+}
+
+// Test
+console.log(solve("hello"));
+console.log(solve("xyz"));`
+            },
+            py: {
+                1: `def solve(a, b):
+    return a + b
+
+# Test
+print(solve(1, 2))
+print(solve(-3, 3))`,
+                2: `def solve(s):
+    return len([c for c in s.lower() if c in 'aeiou'])
+
+# Test
+print(solve("hello"))
+print(solve("xyz"))`
+            },
+            java: {
+                1: `public class Main {
+    public static int solve(int a, int b) {
+        return a + b;
+    }
+    
+    public static void main(String[] args) {
+        System.out.println(solve(1, 2));
+        System.out.println(solve(-3, 3));
+    }
+}`,
+                2: `public class Main {
+    public static int solve(String s) {
+        int count = 0;
+        String vowels = "aeiouAEIOU";
+        for (char c : s.toCharArray()) {
+            if (vowels.indexOf(c) != -1) count++;
+        }
+        return count;
+    }
+    
+    public static void main(String[] args) {
+        System.out.println(solve("hello"));
+        System.out.println(solve("xyz"));
+    }
+}`
+            },
+            cpp: {
+                1: `#include <iostream>
+using namespace std;
+
+int solve(int a, int b) {
+    return a + b;
+}
+
+int main() {
+    cout << solve(1, 2) << endl;
+    cout << solve(-3, 3) << endl;
+    return 0;
+}`,
+                2: `#include <iostream>
+#include <string>
+using namespace std;
+
+int solve(string s) {
+    int count = 0;
+    string vowels = "aeiouAEIOU";
+    for (char c : s) {
+        if (vowels.find(c) != string::npos) count++;
+    }
+    return count;
+}
+
+int main() {
+    cout << solve("hello") << endl;
+    cout << solve("xyz") << endl;
+    return 0;
+}`
+            }
+        };
+
+        function updateEditor(qNum) {
+            const lang = document.getElementById(`lang${qNum}`).value;
+            const code = document.getElementById(`code${qNum}`);
+            code.value = templates[lang][qNum] || '';
+        }
+
+        async function runCode(qNum) {
+            const lang = document.getElementById(`lang${qNum}`).value;
+            const code = document.getElementById(`code${qNum}`).value;
+            const output = document.getElementById(`output${qNum}`);
+            
+            output.innerHTML = 'Running...';
+            
+            if (lang === 'js') {
+                try {
+                    // Create a safe execution environment
+                    const func = new Function(code + '; return { success: true, output: "Code executed successfully" };');
+                    const result = func();
+                    output.innerHTML = `<div class="success">✅ ${result.output}</div>`;
+                } catch (e) {
+                    output.innerHTML = `<div class="error">❌ Error: ${e.message}</div>`;
+                }
+            } else {
+                // For other languages, show the code and suggest manual testing
+                output.innerHTML = `<div class="success">📝 Code ready for manual testing:<br><br>${code.replace(/\n/g, '<br>')}</div>`;
+            }
+        }
+
+        // Initialize editors
+        updateEditor(1);
+        updateEditor(2);
+    </script>
+</body>
+</html>

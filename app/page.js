@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
+const CodeMirror = dynamic(() => import("@uiw/react-codemirror"), { ssr: false });
+import { javascript } from "@codemirror/lang-javascript";
+import { oneDark } from "@codemirror/theme-one-dark";
 
 const LANGS = [
   { id: "js", label: "JavaScript", ext: "js" },
@@ -127,6 +131,9 @@ export default function BytesOfFortune() {
   const [spinning, setSpinning] = useState(false);
   const [pointerBounce, setPointerBounce] = useState(false);
   const [showScores, setShowScores] = useState(false);
+  const [unsolved, setUnsolved] = useState([]); // ids that were drawn but not completed
+  const [nextSpinAt, setNextSpinAt] = useState(0); // timestamp when spinning is allowed
+  const [cooldownSec, setCooldownSec] = useState(90);
 
   const { secondsLeft, start, reset } = useCountdown(15 * 60);
 
@@ -179,7 +186,9 @@ export default function BytesOfFortune() {
   }
 
   function onSpin() {
+    const now = Date.now();
     if (spinning || remainingQuestions.length === 0) return;
+    if (now < nextSpinAt) return; // cooldown active
     setSpinning(true);
     const segment = 360 / QUESTIONS.length;
     const targetIdx = Math.floor(Math.random() * remainingQuestions.length);
@@ -203,6 +212,8 @@ export default function BytesOfFortune() {
         setPointerBounce(true);
         setTimeout(() => setPointerBounce(false), 650);
         setCurrentId(targetQuestion.id);
+        setUnsolved((list) => list.includes(targetQuestion.id) ? list : [...list, targetQuestion.id]);
+        setNextSpinAt(Date.now() + Math.max(0, cooldownSec) * 1000);
       }
     }
     requestAnimationFrame(animate);
@@ -215,6 +226,7 @@ export default function BytesOfFortune() {
     setAvailable((a) => a.filter((x) => x !== id));
     setScore((s) => s + q.points);
     setCurrentId(null);
+    setUnsolved((list) => list.filter((x) => x !== id));
   }
 
   const current = currentId ? questionsMap[currentId] : null;
@@ -222,7 +234,7 @@ export default function BytesOfFortune() {
   return (
     <div className="min-h-screen p-6 sm:p-10">
       {screen === "start" && (
-        <StartScreen onStart={begin} teamName={teamName} setTeamName={setTeamName} onShowScores={() => setShowScores(true)} />
+        <StartScreen onStart={begin} teamName={teamName} setTeamName={setTeamName} onShowScores={() => setShowScores(true)} cooldownSec={cooldownSec} setCooldownSec={setCooldownSec} />
       )}
       {screen === "game" && (
         <GameScreen
@@ -237,6 +249,10 @@ export default function BytesOfFortune() {
           onCompleted={markComplete}
           completed={completed}
           score={score}
+          unsolved={unsolved}
+          setCurrentId={setCurrentId}
+          nextSpinAt={nextSpinAt}
+          cooldownSec={cooldownSec}
         />
       )}
       {screen === "end" && (
@@ -250,7 +266,7 @@ export default function BytesOfFortune() {
   );
 }
 
-function StartScreen({ onStart, teamName, setTeamName, onShowScores }) {
+function StartScreen({ onStart, teamName, setTeamName, onShowScores, cooldownSec, setCooldownSec }) {
   return (
     <div className="max-w-5xl mx-auto fade-in">
       <div className="mb-6">
@@ -298,6 +314,12 @@ function StartScreen({ onStart, teamName, setTeamName, onShowScores }) {
         <div className="flex flex-col sm:flex-row items-center justify-center gap-3 mb-3">
           <input value={teamName} onChange={(e) => setTeamName(e.target.value)} placeholder="Team name"
                  className="glass p-3 text-sm focus-glow w-64" />
+          <div className="flex items-center gap-2">
+            <label className="text-xs muted" htmlFor="cooldown">Cooldown(s)</label>
+            <input id="cooldown" type="number" min="0" max="600" value={cooldownSec}
+                   onChange={(e) => setCooldownSec(parseInt(e.target.value || '0', 10))}
+                   className="glass p-2 text-sm focus-glow w-28" />
+          </div>
         </div>
         <div className="flex items-center justify-center gap-3">
           <button className="pixel-button focus-glow" onClick={onStart} aria-label="Start Challenge">Start Challenge</button>
@@ -317,11 +339,15 @@ function InfoCard({ title, body }) {
   );
 }
 
-function GameScreen({ secondsLeft, onSpin, spinning, pointerBounce, spinAngle, questions, available, current, onCompleted, completed, score }) {
+function GameScreen({ secondsLeft, onSpin, spinning, pointerBounce, spinAngle, questions, available, current, onCompleted, completed, score, unsolved, setCurrentId, nextSpinAt, cooldownSec }) {
   const minutes = Math.floor(secondsLeft / 60);
   const secs = secondsLeft % 60;
   const urgent = secondsLeft <= 60;
   const warning = secondsLeft <= 300 && !urgent;
+  const spinCooldownMs = Math.max(0, nextSpinAt - Date.now());
+  const spinCooldownSec = Math.ceil(spinCooldownMs / 1000);
+  const cooldownTotalMs = Math.max(1, cooldownSec * 1000);
+  const cooldownProgress = Math.min(1, Math.max(0, (cooldownTotalMs - spinCooldownMs) / cooldownTotalMs));
   return (
     <div className="max-w-6xl mx-auto grid lg:grid-cols-[1.2fr_1fr] gap-6">
       <div className="glass p-4 sm:p-6">
@@ -336,7 +362,16 @@ function GameScreen({ secondsLeft, onSpin, spinning, pointerBounce, spinAngle, q
           spinning={spinning}
           onSpin={onSpin}
           pointerBounce={pointerBounce}
+          nextSpinAt={nextSpinAt}
         />
+        {spinCooldownMs > 0 && (
+          <div className="mt-3">
+            <div className="text-center text-sm text-cyan-300 font-semibold pulse-amber">Next spin in {spinCooldownSec}s</div>
+            <div className="h-2 mt-2 rounded-full overflow-hidden" style={{ background: 'rgba(34,211,238,0.15)' }}>
+              <div className="h-full" style={{ width: `${cooldownProgress * 100}%`, background: 'linear-gradient(90deg, #22d3ee, #a855f7)', boxShadow: '0 0 12px rgba(34,211,238,0.7)' }} />
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="glass p-4 sm:p-6">
@@ -348,6 +383,19 @@ function GameScreen({ secondsLeft, onSpin, spinning, pointerBounce, spinAngle, q
           <QuestionPanel q={current} onCompleted={() => onCompleted(current.id)} />
         ) : (
           <div className="text-sm text-[#e9d5ff]">Spin to get a question. Remaining: {available.length}/{questions.length}</div>
+        )}
+        {unsolved.length > 0 && (
+          <div className="mt-4">
+            <div className="text-xs muted mb-1">Unsolved</div>
+            <div className="flex flex-wrap gap-2 text-xs">
+              {unsolved.map((id) => (
+                <button key={id} className="badge focus-glow" onClick={() => setCurrentId(id)}
+                        style={{ borderColor: "var(--primary)", boxShadow: "0 0 10px var(--primary-glow)" }}>
+                  Q{id}
+                </button>
+              ))}
+            </div>
+          </div>
         )}
         {completed.length > 0 && (
           <div className="mt-4 flex flex-wrap gap-2 text-xs">
@@ -361,7 +409,7 @@ function GameScreen({ secondsLeft, onSpin, spinning, pointerBounce, spinAngle, q
   );
 }
 
-function Wheel({ questions, spinAngle, onSpin, spinning, pointerBounce }) {
+function Wheel({ questions, spinAngle, onSpin, spinning, pointerBounce, nextSpinAt }) {
   const canvasRef = useRef(null);
   const [size, setSize] = useState(480);
   const radius = size / 2;
@@ -428,7 +476,16 @@ function Wheel({ questions, spinAngle, onSpin, spinning, pointerBounce }) {
   }, [questions, spinAngle, size]);
 
   useEffect(() => {
-    const onKey = (e) => { if (e.code === "Space") { e.preventDefault(); onSpin(); } };
+    const onKey = (e) => {
+      if (e.code === "Space") {
+        // Allow Space inside inputs/textareas/editors; only trigger when not typing
+        const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : '';
+        const isTyping = tag === 'textarea' || tag === 'input' || tag === 'select' || tag === 'option' || e.target.isContentEditable;
+        if (isTyping) return;
+        e.preventDefault();
+        onSpin();
+      }
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onSpin]);
@@ -437,7 +494,7 @@ function Wheel({ questions, spinAngle, onSpin, spinning, pointerBounce }) {
     <div className="flex flex-col items-center gap-3">
       <div className={`wheel-pointer ${pointerBounce ? "pointer-bounce" : ""}`} />
       <canvas ref={canvasRef} onClick={onSpin} className={`${spinning ? "cursor-wait" : "cursor-pointer"}`} />
-      <button className="pixel-button" onClick={onSpin} disabled={spinning}>{spinning ? "Spinning..." : "Spin (Space)"}</button>
+      <button className="pixel-button" onClick={onSpin} disabled={spinning || (Date.now() < (typeof nextSpinAt !== 'undefined' ? nextSpinAt : 0))}>{spinning ? "Spinning..." : "Spin (Space)"}</button>
     </div>
   );
 }
@@ -448,6 +505,21 @@ function QuestionPanel({ q, onCompleted }) {
   const code = codeByLang[lang] ?? "";
   const [results, setResults] = useState([]);
   const [allPass, setAllPass] = useState(false);
+  const [isRunning, setIsRunning] = useState(false);
+  const [runnerMsg, setRunnerMsg] = useState("");
+  const [editorExt, setEditorExt] = useState([javascript()]);
+
+  function sanitizeUserCode(source) {
+    let s = String(source || "");
+    // Turn `export default function solve(...)` into `function solve(...)`
+    s = s.replace(/export\s+default\s+function\s+solve\s*\(/g, "function solve(");
+    // Remove `export default solve;`
+    s = s.replace(/export\s+default\s+solve\s*;?/g, "");
+    // Remove CommonJS exports that would fail in Function constructor
+    s = s.replace(/module\.exports\s*=\s*solve\s*;?/g, "");
+    s = s.replace(/exports\.default\s*=\s*solve\s*;?/g, "");
+    return s;
+  }
 
   // Reset code map when question changes
   useEffect(() => {
@@ -457,26 +529,111 @@ function QuestionPanel({ q, onCompleted }) {
     setAllPass(false);
   }, [q.id]);
 
-  function runTests() {
-    if (lang !== "js") return; // tests supported only in JS
-    const outputs = [];
-    let passCount = 0;
-    try {
-      // eslint-disable-next-line no-new-func
-      const mod = new Function(`${code}; return typeof solve === 'function' ? solve : (typeof exports !== 'undefined' && exports.default) || null;`)();
-      const solveFn = typeof mod === "function" ? mod : null;
-      if (!solveFn) throw new Error("No default function `solve` found.");
-      for (const t of q.tests) {
-        const got = solveFn.apply(null, t.in);
-        const ok = deepEqual(got, t.out);
-        outputs.push({ input: t.in, expected: t.out, got, ok });
-        if (ok) passCount++;
+  useEffect(() => {
+    let mounted = true;
+    async function load() {
+      try {
+        if (lang === 'js') {
+          if (mounted) setEditorExt([javascript()]);
+        } else if (lang === 'py') {
+          const mod = await import("@codemirror/lang-python").catch(() => null);
+          if (mounted) setEditorExt([mod ? mod.python() : javascript()]);
+        } else if (lang === 'cpp') {
+          const mod = await import("@codemirror/lang-cpp").catch(() => null);
+          if (mounted) setEditorExt([mod ? mod.cpp() : javascript()]);
+        } else if (lang === 'java') {
+          const mod = await import("@codemirror/lang-java").catch(() => null);
+          if (mounted) setEditorExt([mod ? mod.java() : javascript()]);
+        }
+      } catch {
+        if (mounted) setEditorExt([javascript()]);
       }
-      setResults(outputs);
-      setAllPass(outputs.length > 0 && passCount === outputs.length);
-    } catch (e) {
-      setResults([{ error: String(e) }]);
-      setAllPass(false);
+    }
+    load();
+    return () => { mounted = false; };
+  }, [lang]);
+
+  async function runTests() {
+    setIsRunning(true);
+    setRunnerMsg("");
+    try {
+      if (lang === "js") {
+        const outputs = [];
+        let passCount = 0;
+        try {
+          const sanitized = sanitizeUserCode(code);
+          // eslint-disable-next-line no-new-func
+          const mod = new Function(`${sanitized}; return typeof solve === 'function' ? solve : null;`)();
+          const solveFn = typeof mod === "function" ? mod : null;
+          if (!solveFn) throw new Error("No default function `solve` found.");
+          for (const t of q.tests) {
+            const got = solveFn.apply(null, t.in);
+            const ok = deepEqual(got, t.out);
+            outputs.push({ input: t.in, expected: t.out, got, ok });
+            if (ok) passCount++;
+          }
+          setResults(outputs);
+          setAllPass(outputs.length > 0 && passCount === outputs.length);
+        } catch (e) {
+          setResults([{ error: String(e) }]);
+          setAllPass(false);
+        }
+      } else if (lang === "py") {
+        // Lazy-load Pyodide
+        if (typeof window !== 'undefined' && !window.__pyodidePromise) {
+          window.__pyodidePromise = (async () => {
+            const { loadPyodide } = await import("https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodide.js");
+            const py = await loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.24.1/full/" });
+            return py;
+          })();
+        }
+        const pyodide = await window.__pyodidePromise;
+        await pyodide.runPythonAsync(code);
+        const solve = pyodide.globals.get("solve");
+        if (!solve) throw new Error("No function `solve` defined in Python code.");
+        const outputs = [];
+        let passCount = 0;
+        for (const t of q.tests) {
+          const args = t.in;
+          const pyArgs = args.map((a) => pyodide.toPy ? pyodide.toPy(a) : a);
+          let got = solve.callKwargs(pyArgs, {});
+          if (got && typeof got.toJs === 'function') got = got.toJs({ create_proxies: false });
+          const ok = deepEqual(got, t.out);
+          outputs.push({ input: t.in, expected: t.out, got, ok });
+          if (ok) passCount++;
+        }
+        setResults(outputs);
+        setAllPass(outputs.length > 0 && passCount === outputs.length);
+      } else if (lang === "java" || lang === "cpp") {
+        try {
+          const res = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ language: lang, code }) });
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+          }
+          const out = await res.json();
+          const combined = [];
+          if (out.compile && (out.compile.stdout || out.compile.stderr)) {
+            if (out.compile.stdout) combined.push({ label: 'compile stdout', content: out.compile.stdout });
+            if (out.compile.stderr) combined.push({ label: 'compile stderr', content: out.compile.stderr });
+          }
+          if (out.run && (out.run.stdout || out.run.stderr)) {
+            if (out.run.stdout) combined.push({ label: 'run stdout', content: out.run.stdout });
+            if (out.run.stderr) combined.push({ label: 'run stderr', content: out.run.stderr });
+          }
+          if (combined.length === 0) {
+            combined.push({ label: 'result', content: 'Code executed successfully (no output)' });
+          }
+          setResults(combined.map((c) => ({ info: `${c.label}:\n${c.content}` })));
+          setAllPass(false);
+        } catch (e) {
+          setResults([{ error: `Failed to run code: ${e.message}` }]);
+          setAllPass(false);
+        }
+      } else {
+        setRunnerMsg("Unsupported language.");
+      }
+    } finally {
+      setIsRunning(false);
     }
   }
 
@@ -510,7 +667,7 @@ function QuestionPanel({ q, onCompleted }) {
             <option key={l.id} value={l.id}>{l.label}</option>
           ))}
         </select>
-        <span className="text-[11px] text-yellow-300">{lang === "js" ? "Tests: Enabled" : "Tests: Available in JavaScript only"}</span>
+        <span className="text-[11px] text-yellow-300">{lang === "js" ? "Tests: JS" : lang === "py" ? "Tests: Python (Pyodide)" : "Compile & Run via Server"}</span>
       </div>
       {q.tests && q.tests.length > 0 && (
         <div className="glass p-3 mb-3">
@@ -531,15 +688,33 @@ function QuestionPanel({ q, onCompleted }) {
           </div>
         </div>
       )}
-      <textarea value={code} onChange={(e) => onChangeCode(e.target.value)} spellCheck={false}
-        className="w-full h-64 sm:h-80 glass p-3 font-mono text-sm outline-none" />
+      <div className="glass p-1">
+        <CodeMirror
+          value={code}
+          height="320px"
+          theme={oneDark}
+          extensions={editorExt}
+          basicSetup={{ lineNumbers: true, highlightActiveLine: true, indentOnInput: true }}
+          onChange={(val) => onChangeCode(val)}
+        />
+      </div>
       <div className="mt-3 flex items-center gap-2">
-        <button className="pixel-button" onClick={runTests} disabled={lang !== "js"}>Run Tests</button>
+        <button className="pixel-button" onClick={runTests} disabled={isRunning}>{isRunning ? "Running..." : (lang === 'js' || lang === 'py' ? 'Run Tests' : 'Compile & Run') }</button>
         <button className="pixel-button" onClick={resetStub}>Reset</button>
         {allPass && (
           <button className="pixel-button" onClick={onCompleted}>Mark as Complete</button>
         )}
       </div>
+      {runnerMsg && (
+        <div className="mt-2 text-xs text-[#e9d5ff]">{runnerMsg}</div>
+      )}
+      {results && results.length > 0 && lang !== 'js' && lang !== 'py' && (
+        <div className="mt-3 space-y-2">
+          {results.map((r, i) => (
+            <div key={i} className="glass p-2 text-xs text-[#e9d5ff] whitespace-pre-wrap break-words">{r.error ? r.error : (r.info || JSON.stringify(r))}</div>
+          ))}
+        </div>
+      )}
       <div className="mt-3 space-y-2">
         {results.map((r, i) => (
           <div key={i} className="glass p-2 text-xs">
@@ -581,7 +756,7 @@ function deepEqual(a, b) {
 function initializeCodeMap(q) {
   const js = q.stub;
   const py = `def solve(*args):\n    # TODO\n    pass\n`;
-  const java = `public class Main {\n    public static Object solve(Object... args) {\n        // TODO\n        return null;\n    }\n}\n`;
+  const java = `public class Main {\n    public static Object solve(Object... args) {\n        // TODO\n        return null;\n    }\n\n    public static void main(String[] args) {\n        // Entry point required by the runner.\n        // Implement solve(...) above.\n    }\n}\n`;
   const cpp = `#include <bits/stdc++.h>\nusing namespace std;\n\n// You may change signature as needed for local testing\nint main(){\n    // TODO\n    return 0;\n}\n`;
   // load from localStorage if exists
   if (typeof window !== 'undefined') {
